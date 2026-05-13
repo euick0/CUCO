@@ -11,47 +11,93 @@ object CucoOcrParser {
             usageCounter.trimStart('0').ifEmpty { "0" }
     }
 
-    private val serialLabel = Regex("""machine\s*serial\s*number""", RegexOption.IGNORE_CASE)
-    private val certifiedLabel = Regex("""certified\s*time""", RegexOption.IGNORE_CASE)
-    private val usageLabel = Regex("""usage\s*(counter|time)""", RegexOption.IGNORE_CASE)
+    private data class FieldPattern(
+        val canonicalName: String,
+        val labelRegex: Regex,
+        val minLen: Int,
+        val maxLen: Int,
+    )
+
+    private val fieldPatterns = listOf(
+        FieldPattern(
+            canonicalName = "serial",
+            labelRegex = Regex("""(mach[i1l]n[e3]\s*ser[i1l]a[l1]\s*n[uv]mb[e3]r|sec[uv]r[i1l]ty\s*[i1l]d)""", RegexOption.IGNORE_CASE),
+            minLen = 16,
+            maxLen = 64,
+        ),
+        FieldPattern(
+            canonicalName = "certified",
+            labelRegex = Regex("""(cert[i1l]f[i1l][e3]d\s*t[i1l]m[e3]|\bct\b)""", RegexOption.IGNORE_CASE),
+            minLen = 4,
+            maxLen = 16,
+        ),
+        FieldPattern(
+            canonicalName = "usage",
+            labelRegex = Regex("""([uv]sag[e3]\s*(co[uv]nt[e3]r|t[i1l]m[e3])|\buc\b)""", RegexOption.IGNORE_CASE),
+            minLen = 1,
+            maxLen = 16,
+        ),
+    )
 
     fun parse(text: String): CucoFields? {
-        val serial = extractValue(text, serialLabel, minLen = 16, maxLen = 64) ?: return null
-        val certified = extractValue(text, certifiedLabel, minLen = 4, maxLen = 16) ?: return null
-        val usage = extractValue(text, usageLabel, minLen = 1, maxLen = 16) ?: return null
-        return CucoFields(serial, certified, usage)
+        val cleaned = preprocess(text)
+        val values = mutableMapOf<String, String>()
+        for (pattern in fieldPatterns) {
+            extractByLabel(cleaned, pattern)?.let { values[pattern.canonicalName] = it }
+        }
+        if (values.size < 3) inferMissingFromGlobalCandidates(cleaned, values)
+        return CucoFields(
+            serial = values["serial"] ?: return null,
+            certifiedTime = values["certified"] ?: return null,
+            usageCounter = values["usage"] ?: return null,
+        )
     }
 
-    private fun extractValue(
-        text: String,
-        label: Regex,
-        minLen: Int,
-        maxLen: Int,
-    ): String? {
-        val match = label.find(text) ?: return null
-        // Search forward from the end of the label match for the value.
-        // The page renders "Label : VALUE" — value may follow on the same line or wrap.
-        val tail = text.substring(match.range.last + 1)
+    fun looksLikeCucoScreen(text: String): Boolean {
+        val normalized = preprocess(text).lowercase()
+        val markers = listOf("unblocking", "cuco", "machine serial", "security id", "certified", "usage", "ct", "uc")
+        val found = markers.count { normalized.contains(it) }
+        return found >= 3
+    }
+
+    private fun preprocess(text: String): String =
+        text.replace('\u00A0', ' ')
+            .replace(Regex("""[\t\r]+"""), " ")
             .lineSequence()
-            .firstOrNull { it.contains(Regex("""[0-9A-Za-z]""")) }
-            ?: return null
-        // Strip leading "1.", "2.", "3." numbering artefacts and the colon separator.
-        val afterColon = tail.substringAfter(':', tail).trim()
-        return cleanHex(afterColon, minLen, maxLen)
+            .map { it.trim() }
+            .joinToString("\n")
+
+    private fun extractByLabel(text: String, pattern: FieldPattern): String? {
+        val lines = text.lines()
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (!pattern.labelRegex.containsMatchIn(line)) continue
+            val candidateSegments = buildList {
+                add(line.substringAfter(':', ""))
+                if (i + 1 < lines.size) add(lines[i + 1])
+                if (i + 2 < lines.size) add(lines[i + 2])
+            }
+            candidateSegments.forEach { segment ->
+                cleanHex(segment, pattern.minLen, pattern.maxLen)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun inferMissingFromGlobalCandidates(text: String, values: MutableMap<String, String>) {
+        val candidates = Regex("""[0-9A-Fa-fOolLI]{4,}""").findAll(text)
+            .mapNotNull { cleanHex(it.value, 1, 64) }
+            .distinct()
+            .toList()
+        if ("serial" !in values) values["serial"] = candidates.firstOrNull { it.length in 16..64 } ?: return
+        if ("certified" !in values) values["certified"] = candidates.firstOrNull { it.length in 4..16 && it != values["serial"] } ?: return
+        if ("usage" !in values) values["usage"] = candidates.lastOrNull { it.length in 1..16 && it != values["serial"] && it != values["certified"] } ?: return
     }
 
     private fun cleanHex(raw: String, minLen: Int, maxLen: Int): String? {
-        // Conservative OCR corrections inside the captured value only.
-        val normalised = raw
-            .replace('O', '0').replace('o', '0')
-            .replace('I', '1').replace('l', '1').replace('L', '1')
-            .uppercase()
-        // Take the longest contiguous hex run on this segment.
-        val best = Regex("""[0-9A-F]+""").findAll(normalised)
-            .map { it.value }
-            .maxByOrNull { it.length }
-            ?: return null
-        if (best.length < minLen || best.length > maxLen) return null
+        val normalized = raw.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace('L', '1').uppercase()
+        val best = Regex("""[0-9A-F]+""").findAll(normalized).map { it.value }.maxByOrNull { it.length } ?: return null
+        if (best.length !in minLen..maxLen) return null
         return best
     }
 }

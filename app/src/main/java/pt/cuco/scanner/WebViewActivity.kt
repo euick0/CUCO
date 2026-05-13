@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import pt.cuco.scanner.databinding.ActivityWebviewBinding
 
@@ -32,12 +33,25 @@ class WebViewActivity : AppCompatActivity() {
 
         binding.webview.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
-                // Small delay so any page-side JS finishes wiring inputs.
-                view.postDelayed({ view.evaluateJavascript(js, null) }, 300)
+                runFillWithRetry(view, js, 0)
             }
         }
 
         binding.webview.loadUrl(CUCO_URL)
+    }
+
+    private fun runFillWithRetry(view: WebView, js: String, attempt: Int) {
+        view.postDelayed({
+            view.evaluateJavascript(js) { result ->
+                val ok = result?.contains("\"serial\":true") == true &&
+                    result.contains("\"ctime\":true") &&
+                    result.contains("\"usage\":true")
+                if (!ok && attempt < 5) {
+                    runFillWithRetry(view, js, attempt + 1)
+                }
+                Log.d("WebViewActivity", "fill attempt=$attempt result=$result")
+            }
+        }, 300L * (attempt + 1))
     }
 
     override fun onBackPressed() {

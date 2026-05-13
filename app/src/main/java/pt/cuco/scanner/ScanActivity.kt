@@ -43,23 +43,36 @@ class ScanActivity : AppCompatActivity() {
             InputImage.fromFilePath(this, uri)
         } catch (e: Exception) {
             Log.w(TAG, "InputImage.fromFilePath failed", e)
-            failAndReturn()
+            failAndReturn(R.string.toast_no_image)
             return
         }
+
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         recognizer.process(image)
             .addOnSuccessListener { result ->
-                Log.d(TAG, "OCR text:\n${result.text}")
-                val parsed = CucoOcrParser.parse(result.text)
+                val text = result.text.orEmpty()
+                Log.d(TAG, "OCR text:\n$text")
+
+                if (text.length < 60 || result.textBlocks.size < 3) {
+                    failAndReturn(R.string.toast_bad_photo)
+                    return@addOnSuccessListener
+                }
+
+                if (!CucoOcrParser.looksLikeCucoScreen(text)) {
+                    failAndReturn(R.string.toast_not_cuco_screen)
+                    return@addOnSuccessListener
+                }
+
+                val parsed = CucoOcrParser.parse(text)
                 if (parsed == null) {
-                    failAndReturn()
+                    failAndReturn(R.string.toast_ocr_failed)
                 } else {
                     openWebView(parsed)
                 }
             }
             .addOnFailureListener { e ->
                 Log.w(TAG, "OCR failed", e)
-                failAndReturn()
+                failAndReturn(R.string.toast_bad_photo)
             }
     }
 
@@ -73,8 +86,8 @@ class ScanActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun failAndReturn() {
-        Toast.makeText(this, R.string.toast_ocr_failed, Toast.LENGTH_LONG).show()
+    private fun failAndReturn(messageRes: Int) {
+        Toast.makeText(this, messageRes, Toast.LENGTH_LONG).show()
         finish()
     }
 

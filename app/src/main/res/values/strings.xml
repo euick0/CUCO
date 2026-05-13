@@ -2,12 +2,15 @@
 <resources>
     <string name="app_name">CUCo Scanner</string>
     <string name="main_subtitle">Tira ou escolhe uma foto do ecrã CUCo para preencher o site automaticamente.</string>
-    <string name="btn_take_photo">Tirar foto</string>
+    <string name="btn_take_photo">Escanear foto</string>
     <string name="btn_pick_gallery">Escolher da galeria</string>
     <string name="scan_in_progress">A ler os campos do CUCo…</string>
     <string name="scan_preview">Foto seleccionada</string>
     <string name="toast_no_photo">Foto cancelada.</string>
     <string name="toast_camera_denied">Sem permissão de câmara.</string>
     <string name="toast_no_image">Imagem inválida.</string>
-    <string name="toast_ocr_failed">Não consegui ler todos os campos — tenta outra foto com mais luz e menos reflexos.</string>
+    <string name="toast_bad_photo">A foto está ilegível ou desfocada. Tira outra foto, mais perto e com menos reflexos.</string>
+    <string name="toast_not_cuco_screen">Não detectei um ecrã de bloqueio CUCo válido nesta imagem. Escolhe outra foto.</string>
+    <string name="toast_ocr_failed">Li parte da imagem, mas não consegui CT e UC. Tenta outra foto com melhor foco/luz.</string>
+    <string name="scanner_icon_desc">Ícone de scanner</string>
 </resources>

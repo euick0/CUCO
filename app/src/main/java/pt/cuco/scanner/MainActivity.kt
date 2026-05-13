@@ -25,7 +25,7 @@ class MainActivity : AppCompatActivity() {
             openScan(uri)
         } else if (ok) {
             Toast.makeText(this, R.string.toast_no_image, Toast.LENGTH_SHORT).show()
-        } else if (!ok) {
+        } else {
             Toast.makeText(this, R.string.toast_no_photo, Toast.LENGTH_SHORT).show()
         }
     }

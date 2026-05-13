@@ -23,7 +23,9 @@ class MainActivity : AppCompatActivity() {
         pendingCameraUri = null
         if (ok && uri != null) {
             openScan(uri)
-        } else if (!ok) {
+        } else if (ok) {
+            Toast.makeText(this, R.string.toast_no_image, Toast.LENGTH_SHORT).show()
+        } else {
             Toast.makeText(this, R.string.toast_no_photo, Toast.LENGTH_SHORT).show()
         }
     }
@@ -45,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        pendingCameraUri = savedInstanceState?.getString(STATE_PENDING_URI)?.let(Uri::parse)
 
         binding.btnTakePhoto.setOnClickListener {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -65,6 +68,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingCameraUri?.let { outState.putString(STATE_PENDING_URI, it.toString()) }
+    }
+
     private fun launchCamera() {
         val picturesDir = File(cacheDir, "pictures").apply { mkdirs() }
         val photoFile = File.createTempFile("cuco_", ".jpg", picturesDir)
@@ -83,5 +91,9 @@ class MainActivity : AppCompatActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         startActivity(intent)
+    }
+
+    companion object {
+        private const val STATE_PENDING_URI = "pending_camera_uri"
     }
 }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CUCo Scanner</string>
+    <string name="main_subtitle">Tira ou escolhe uma foto do ecrã CUCo para preencher o site automaticamente.</string>
+    <string name="btn_take_photo">Tirar foto</string>
+    <string name="btn_pick_gallery">Escolher da galeria</string>
+    <string name="scan_in_progress">A ler os campos do CUCo…</string>
+    <string name="scan_preview">Foto seleccionada</string>
+    <string name="toast_no_photo">Foto cancelada.</string>
+    <string name="toast_camera_denied">Sem permissão de câmara.</string>
+    <string name="toast_no_image">Imagem inválida.</string>
+    <string name="toast_ocr_failed">Não consegui ler todos os campos — tenta outra foto com mais luz e menos reflexos.</string>
+</resources>

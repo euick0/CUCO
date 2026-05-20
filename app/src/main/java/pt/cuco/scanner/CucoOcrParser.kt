@@ -39,18 +39,20 @@ object CucoOcrParser {
         ),
     )
 
+    // Lines that should never be treated as value-bearing (the CUCO screen header
+    // and the "Enter Unblocking Code" prompt contain words that survive OCR
+    // normalization to look like hex — e.g. "Code" -> "C0DE").
+    private val rejectLineRegex = Regex(
+        """unblock|unlock|enter|c[o0]d[e3]|desbloque|aceda|suporte|inforland|seguranca|computador""",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun parse(text: String): CucoFields? {
-        val cleaned = preprocess(text)
+        val lines = preprocess(text).lines()
         val values = mutableMapOf<String, String>()
 
-        // 1) Preferred: line-aware extraction near each label.
         for (pattern in fieldPatterns) {
-            extractByLabel(cleaned, pattern)?.let { values[pattern.canonicalName] = it }
-        }
-
-        // 2) Fallback: if OCR split text badly, infer from candidate pool by expected lengths/order.
-        if (values.size < 3) {
-            inferMissingFromGlobalCandidates(cleaned, values)
+            extractByLabel(lines, pattern)?.let { values[pattern.canonicalName] = it }
         }
 
         val serial = values["serial"] ?: return null
@@ -61,59 +63,70 @@ object CucoOcrParser {
     }
 
     private fun preprocess(text: String): String =
-        text.replace('\u00A0', ' ')
+        text.replace(' ', ' ')
             .replace(Regex("""[\t\r]+"""), " ")
             .lineSequence()
             .map { it.trim() }
             .joinToString("\n")
 
-    private fun extractByLabel(text: String, pattern: FieldPattern): String? {
-        val lines = text.lines()
+    private fun extractByLabel(lines: List<String>, pattern: FieldPattern): String? {
         for (i in lines.indices) {
             val line = lines[i]
             if (!pattern.labelRegex.containsMatchIn(line)) continue
 
-            // Same line after ':' first, then next line fallback.
-            val candidateSegments = buildList {
-                add(line.substringAfter(':', ""))
-                if (i + 1 < lines.size) add(lines[i + 1])
-                if (i + 2 < lines.size) add(lines[i + 2])
-            }
+            // Prefer the value on the same line, after the first colon.
+            // Anchoring to the colon avoids picking up letters from the label itself.
+            val afterColon = if (line.contains(':')) line.substringAfter(':') else ""
+            cleanHex(afterColon, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
+                ?.let { return it }
 
-            candidateSegments.forEach { segment ->
-                cleanHex(segment, pattern.minLen, pattern.maxLen)?.let { return it }
+            // Fall back to the next 1-2 lines only when they look like a continuation
+            // (e.g. the serial wrapped). Stop the moment we hit another labeled line
+            // or a known noise line so we never pull the usage value into ctime, etc.
+            for (j in (i + 1)..(i + 2).coerceAtMost(lines.size - 1)) {
+                val next = lines[j]
+                if (next.isBlank()) continue
+                if (isOtherLabelLine(next, pattern)) break
+                if (rejectLineRegex.containsMatchIn(next)) break
+                cleanHex(next, pattern.minLen, pattern.maxLen, fromLabeledValue = false)
+                    ?.let { return it }
             }
         }
         return null
     }
 
-    private fun inferMissingFromGlobalCandidates(text: String, values: MutableMap<String, String>) {
-        val candidates = Regex("""[0-9A-Fa-fOolLI]{4,}""").findAll(text)
-            .mapNotNull { cleanHex(it.value, 1, 64) }
-            .distinct()
-            .toList()
+    private fun isOtherLabelLine(line: String, current: FieldPattern): Boolean =
+        fieldPatterns.any { it !== current && it.labelRegex.containsMatchIn(line) }
 
-        if ("serial" !in values) {
-            values["serial"] = candidates.firstOrNull { it.length in 16..64 } ?: return
+    private fun cleanHex(raw: String, minLen: Int, maxLen: Int, fromLabeledValue: Boolean): String? {
+        // 1:1 char normalization so indices in `normalized` map back to `raw`.
+        val normalized = buildString(raw.length) {
+            for (c in raw) {
+                append(
+                    when (c) {
+                        'O', 'o' -> '0'
+                        'I', 'l', 'L' -> '1'
+                        in 'a'..'f' -> ('A' + (c - 'a'))
+                        else -> c
+                    }
+                )
+            }
         }
-        if ("certified" !in values) {
-            values["certified"] = candidates.firstOrNull { it.length in 4..16 && it != values["serial"] } ?: return
-        }
-        if ("usage" !in values) {
-            values["usage"] = candidates.lastOrNull { it.length in 1..16 && it != values["serial"] && it != values["certified"] } ?: return
-        }
-    }
-
-    private fun cleanHex(raw: String, minLen: Int, maxLen: Int): String? {
-        val normalized = raw
-            .replace('O', '0').replace('o', '0')
-            .replace('I', '1').replace('l', '1').replace('L', '1')
-            .uppercase()
-        val best = Regex("""[0-9A-F]+""").findAll(normalized)
-            .map { it.value }
-            .maxByOrNull { it.length }
+        val match = Regex("""[0-9A-F]+""").findAll(normalized)
+            .maxByOrNull { it.value.length }
             ?: return null
+        val best = match.value
         if (best.length !in minLen..maxLen) return null
+
+        // Reject English-word-like matches that survive normalization (e.g. "Code" ->
+        // "C0DE"). When the match came from a continuation line rather than directly
+        // after a labeled colon, require at least one digit that was already present
+        // in the source text — purely normalized letters don't count.
+        if (!fromLabeledValue) {
+            val original = raw.substring(match.range.first, match.range.last + 1)
+            if (!original.any { it.isDigit() }) return null
+        }
+
         return best
     }
 }

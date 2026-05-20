@@ -74,12 +74,12 @@ object FillFormJs {
   ]) || findByKeywords([['serial'], ['machine','serial']], null);
 
   var ctimeEl = findBySelectors([
-    'input[name=ctime]', 'input[id=ctime]', 'input[name*=certified i]',
+    'input[id=c]', 'input[name=ctime]', 'input[id=ctime]', 'input[name*=certified i]',
     'input[id*=certified i]', 'input[name*=time i]', 'input[id*=time i]'
   ]) || findByKeywords([['certified'], ['certified', 'time'], ['ctime']], ['usage', 'counter']);
 
   var usageEl = findBySelectors([
-    'input[name=usage]', 'input[name=usagecounter]', 'input[id*=usage i]',
+    'input[id=u]', 'input[name=usage]', 'input[name=usagecounter]', 'input[id*=usage i]',
     'input[id*=counter i]', 'input[name*=counter i]'
   ]) || findByKeywords([['usage'], ['usage', 'counter'], ['counter']], ['time', 'certified']);
 

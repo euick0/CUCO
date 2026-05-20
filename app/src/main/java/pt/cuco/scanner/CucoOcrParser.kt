@@ -13,6 +13,7 @@ object CucoOcrParser {
 
     private data class FieldPattern(
         val canonicalName: String,
+        val numericPrefix: Int,
         val labelRegex: Regex,
         val minLen: Int,
         val maxLen: Int,
@@ -21,38 +22,62 @@ object CucoOcrParser {
     private val fieldPatterns = listOf(
         FieldPattern(
             canonicalName = "serial",
-            labelRegex = Regex("""mach[i1l]n[e3]\s*ser[i1l]a[l1]\s*n[uv]mb[e3]r""", RegexOption.IGNORE_CASE),
+            numericPrefix = 1,
+            labelRegex = Regex(
+                """mach[i1l]n[e3]\s*ser[i1l]a[l1]\s*n[uv]mb[e3]r""",
+                RegexOption.IGNORE_CASE,
+            ),
             minLen = 16,
             maxLen = 64,
         ),
         FieldPattern(
             canonicalName = "certified",
-            labelRegex = Regex("""cert[i1l]f[i1l][e3]d\s*t[i1l]m[e3]""", RegexOption.IGNORE_CASE),
+            numericPrefix = 2,
+            labelRegex = Regex(
+                """cert[i1l]f[i1l][e3]d\s*t[i1l]m[e3]""",
+                RegexOption.IGNORE_CASE,
+            ),
             minLen = 4,
             maxLen = 16,
         ),
         FieldPattern(
             canonicalName = "usage",
-            labelRegex = Regex("""[uv]sag[e3]\s*(co[uv]nt[e3]r|t[i1l]m[e3])""", RegexOption.IGNORE_CASE),
+            numericPrefix = 3,
+            labelRegex = Regex(
+                """[uv]sag[e3]\s*(c[o0][uv]nt[e3]r|t[i1l]m[e3])""",
+                RegexOption.IGNORE_CASE,
+            ),
             minLen = 1,
             maxLen = 16,
         ),
     )
 
-    // Lines that should never be treated as value-bearing (the CUCO screen header
-    // and the "Enter Unblocking Code" prompt contain words that survive OCR
-    // normalization to look like hex — e.g. "Code" -> "C0DE").
+    // Lines that should never be treated as value-bearing — the CUCO screen
+    // header and the "Enter Unblocking Code" prompt contain words that survive
+    // OCR normalization to look like hex (e.g. "Code" -> "C0DE").
     private val rejectLineRegex = Regex(
-        """unblock|unlock|enter|c[o0]d[e3]|desbloque|aceda|suporte|inforland|seguranca|computador""",
+        """unblock|unlock|desbloque|aceda|suporte|inforland|seguranca|computador""",
         RegexOption.IGNORE_CASE,
     )
+
+    // Matches "1.", "2.", "3." (or ")" / ":") at the start of a line —
+    // a reliable positional anchor even when the label text is mangled by OCR.
+    private val numberedPrefixRegex = Regex("""^([1-3])\s*[.):]\s*""")
 
     fun parse(text: String): CucoFields? {
         val lines = preprocess(text).lines()
         val values = mutableMapOf<String, String>()
 
+        // Strategy 1: extract by label text (handles OCR substitutions in labels).
         for (pattern in fieldPatterns) {
             extractByLabel(lines, pattern)?.let { values[pattern.canonicalName] = it }
+        }
+
+        // Strategy 2: fall back to numbered-prefix anchors ("1.", "2.", "3.").
+        // The numeric prefix on the CUCO screen survives OCR even when the
+        // label words get garbled, so it's a reliable positional signal.
+        if (values.size < fieldPatterns.size) {
+            extractByNumberedPrefix(lines, values)
         }
 
         val serial = values["serial"] ?: return null
@@ -63,7 +88,7 @@ object CucoOcrParser {
     }
 
     private fun preprocess(text: String): String =
-        text.replace(' ', ' ')
+        text.replace('\u00A0', ' ')
             .replace(Regex("""[\t\r]+"""), " ")
             .lineSequence()
             .map { it.trim() }
@@ -72,17 +97,19 @@ object CucoOcrParser {
     private fun extractByLabel(lines: List<String>, pattern: FieldPattern): String? {
         for (i in lines.indices) {
             val line = lines[i]
-            if (!pattern.labelRegex.containsMatchIn(line)) continue
+            val labelMatch = pattern.labelRegex.find(line) ?: continue
 
-            // Prefer the value on the same line, after the first colon.
-            // Anchoring to the colon avoids picking up letters from the label itself.
-            val afterColon = if (line.contains(':')) line.substringAfter(':') else ""
-            cleanHex(afterColon, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
+            // Take the text right after the label, chopped at the next field
+            // label if multiple are present on the same line.
+            val afterLabel = line.substring(labelMatch.range.last + 1)
+            val segment = trimAtNextLabel(afterLabel, pattern)
+            val candidate = if (segment.contains(':')) segment.substringAfter(':') else segment
+            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
                 ?.let { return it }
 
-            // Fall back to the next 1-2 lines only when they look like a continuation
-            // (e.g. the serial wrapped). Stop the moment we hit another labeled line
-            // or a known noise line so we never pull the usage value into ctime, etc.
+            // Fall back to the next 1-2 lines for wrapped values, but stop at
+            // another labeled line or a known noise line so we never pull the
+            // next field's value or "Code" -> "C0DE" into this field.
             for (j in (i + 1)..(i + 2).coerceAtMost(lines.size - 1)) {
                 val next = lines[j]
                 if (next.isBlank()) continue
@@ -93,6 +120,29 @@ object CucoOcrParser {
             }
         }
         return null
+    }
+
+    private fun extractByNumberedPrefix(lines: List<String>, values: MutableMap<String, String>) {
+        val patternByPrefix = fieldPatterns.associateBy { it.numericPrefix }
+        for (line in lines) {
+            val match = numberedPrefixRegex.find(line) ?: continue
+            val pattern = patternByPrefix[match.groupValues[1].toInt()] ?: continue
+            if (pattern.canonicalName in values) continue
+
+            val rest = line.substring(match.range.last + 1)
+            val segment = trimAtNextLabel(rest, pattern)
+            val candidate = if (segment.contains(':')) segment.substringAfter(':') else segment
+            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
+                ?.let { values[pattern.canonicalName] = it }
+        }
+    }
+
+    private fun trimAtNextLabel(text: String, current: FieldPattern): String {
+        val nextStart = fieldPatterns
+            .filter { it !== current }
+            .mapNotNull { it.labelRegex.find(text)?.range?.first }
+            .minOrNull()
+        return if (nextStart != null) text.substring(0, nextStart) else text
     }
 
     private fun isOtherLabelLine(line: String, current: FieldPattern): Boolean =
@@ -112,21 +162,22 @@ object CucoOcrParser {
                 )
             }
         }
+        // Pick the longest hex run that fits within [minLen, maxLen]. Filtering
+        // by length BEFORE selecting the max ensures we don't lose a valid 8-char
+        // ctime value just because a 32-char serial also appears on the same line.
         val match = Regex("""[0-9A-F]+""").findAll(normalized)
+            .filter { it.value.length in minLen..maxLen }
             .maxByOrNull { it.value.length }
             ?: return null
         val best = match.value
-        if (best.length !in minLen..maxLen) return null
 
-        // Reject English-word-like matches that survive normalization (e.g. "Code" ->
-        // "C0DE"). When the match came from a continuation line rather than directly
-        // after a labeled colon, require at least one digit that was already present
-        // in the source text — purely normalized letters don't count.
+        // For continuation-line matches (not directly after a labeled colon),
+        // require at least one real digit in the source text so an OCR'd word
+        // like "Code" -> "C0DE" doesn't pass as a hex value.
         if (!fromLabeledValue) {
             val original = raw.substring(match.range.first, match.range.last + 1)
             if (!original.any { it.isDigit() }) return null
         }
-
         return best
     }
 }

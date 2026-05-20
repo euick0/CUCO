@@ -30,7 +30,6 @@ class CucoOcrParserTest {
 
     @Test
     fun parsesUserSubmittedScreen() {
-        // Reproduces the layout of the sample photo the user provided.
         val text = """
             O seu computador esta bloqueado pela seguranca CUCo
             Aceda a iland.pt/suportecuco ou contacte o suporte Inforlandia: 234 340 880 para
@@ -82,6 +81,55 @@ class CucoOcrParserTest {
     }
 
     @Test
+    fun parsesViaNumberedPrefixWhenLabelsMangled() {
+        // OCR severely mis-reads label words but the "1.", "2.", "3." prefix
+        // and the values themselves survive — the parser falls back to the
+        // numbered prefix to assign each value to its correct field.
+        val text = """
+            1. M@chnle SeriaI Numb3r : 9F0D5D448916710C6053779DCBC24EA9
+            2. Certifled T!me        : 1D293962
+            3. Usage C0unt3r         : 00000001
+        """.trimIndent()
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun handlesUsageCounterWithZeroOhTypo() {
+        // OCR commonly mis-reads the 'o' in "Counter" as '0'. The label regex
+        // and the numbered-prefix fallback both have to tolerate this.
+        val text = """
+            1. Machine Serial Number : 9F0D5D448916710C6053779DCBC24EA9
+            2. Certified Time        : 1D293962
+            3. Usage C0unter         : 00000001
+        """.trimIndent()
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("00000001", fields!!.usageCounter)
+    }
+
+    @Test
+    fun trimsAtNextLabelOnJoinedLine() {
+        // If OCR joins multiple fields onto a single line, each label's value
+        // must stop at the next label, not greedily eat the rest of the line.
+        val text =
+            "1. Machine Serial Number : 9F0D5D448916710C6053779DCBC24EA9 " +
+                "2. Certified Time : 1D293962 " +
+                "3. Usage Counter : 00000001"
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
     fun ignoresUnblockingCodeNoise() {
         // If the Certified Time value gets dropped by OCR, the parser must NOT
         // fall through to the "Enter Unblocking Code" line (where "Code" would
@@ -93,9 +141,6 @@ class CucoOcrParserTest {
             Enter Unblocking Code: _
         """.trimIndent()
 
-        // The certified time row has no value and the next lines are either
-        // another labeled field or noise, so parsing should fail rather than
-        // produce "C0DE" or "00000001" as the certified time.
         assertNull(CucoOcrParser.parse(text))
     }
 

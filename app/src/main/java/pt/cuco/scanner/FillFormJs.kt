@@ -153,12 +153,19 @@ object FillFormJs {
   function tryFill() {
     var v = window.__cucoFillerValues || values;
 
+    // Serial field: the CUCO page uses short ids "c" and "u" for ctime / usage,
+    // but the serial input is NOT id="s" — that selector matched an unrelated
+    // first input on the page and broke serial autofill. Match only by full
+    // names / keywords.
     var serialEl = findBySelectors([
-      'input[id="serial"]', 'input[name="serial"]', 'input[id="s"]', 'input[name="s"]',
+      'input[id="serial"]', 'input[name="serial"]',
+      'input[id="serialnumber"]', 'input[name="serialnumber"]',
+      'input[id="machineserial"]', 'input[name="machineserial"]',
       'input[id*="serial" i]', 'input[name*="serial" i]'
     ]) || findByKeywords([
-      ['serial'], ['machine', 'serial'], ['serie'], ['serial', 'number'], ['n', 'serie']
-    ], null);
+      ['machine', 'serial'], ['serial', 'number'], ['numero', 'serie'],
+      ['numero', 'de', 'serie'], ['n', 'serie'], ['serial'], ['serie']
+    ], ['certified', 'tempo', 'usage', 'counter', 'contador', 'utiliza', 'unblock', 'desbloque', 'code', 'codigo']);
 
     var ctimeEl = findBySelectors([
       'input[id="c"]', 'input[name="c"]',

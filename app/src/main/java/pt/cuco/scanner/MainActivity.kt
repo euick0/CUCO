@@ -4,29 +4,29 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import pt.cuco.scanner.databinding.ActivityMainBinding
-import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var pendingCameraUri: Uri? = null
 
-    private val takePicture = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val uri = pendingCameraUri
-        pendingCameraUri = null
-        if (ok && uri != null) {
+    private val guidedCamera = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result: ActivityResult ->
+        val uri = result.data?.imageUriExtra()
+        if (result.resultCode == RESULT_OK && uri != null) {
             openScan(uri)
-        } else if (ok) {
-            Toast.makeText(this, R.string.toast_no_image, Toast.LENGTH_SHORT).show()
-        } else {
+        } else if (result.resultCode != RESULT_OK) {
             Toast.makeText(this, R.string.toast_no_photo, Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, R.string.toast_no_image, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -47,7 +47,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        pendingCameraUri = savedInstanceState?.getString(STATE_PENDING_URI)?.let(Uri::parse)
 
         binding.btnTakePhoto.setOnClickListener {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -68,21 +67,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        pendingCameraUri?.let { outState.putString(STATE_PENDING_URI, it.toString()) }
-    }
-
     private fun launchCamera() {
-        val picturesDir = File(cacheDir, "pictures").apply { mkdirs() }
-        val photoFile = File.createTempFile("cuco_", ".jpg", picturesDir)
-        val uri = FileProvider.getUriForFile(
-            this,
-            "$packageName.fileprovider",
-            photoFile,
-        )
-        pendingCameraUri = uri
-        takePicture.launch(uri)
+        guidedCamera.launch(Intent(this, CameraActivity::class.java))
     }
 
     private fun openScan(imageUri: Uri) {
@@ -93,7 +79,11 @@ class MainActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    companion object {
-        private const val STATE_PENDING_URI = "pending_camera_uri"
-    }
+    private fun Intent.imageUriExtra(): Uri? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(CameraActivity.EXTRA_IMAGE_URI, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(CameraActivity.EXTRA_IMAGE_URI)
+        }
 }

@@ -4,10 +4,18 @@
     <string name="main_subtitle">Tira ou escolhe uma foto do ecrã CUCo para preencher o site automaticamente.</string>
     <string name="btn_take_photo">Tirar foto</string>
     <string name="btn_pick_gallery">Escolher da galeria</string>
+    <string name="btn_capture">Capturar foto</string>
+    <string name="btn_capture_symbol">●</string>
+    <string name="camera_hint">Alinha o ecrã azul dentro da moldura e evita reflexos sobre os três campos.</string>
     <string name="scan_in_progress">A ler os campos do CUCo…</string>
+    <string name="scan_in_progress_step">A ler os campos do CUCo (%1$d/%2$d)…</string>
     <string name="scan_preview">Foto seleccionada</string>
     <string name="toast_no_photo">Foto cancelada.</string>
     <string name="toast_camera_denied">Sem permissão de câmara.</string>
+    <string name="toast_camera_unavailable">Não consegui abrir a câmara.</string>
     <string name="toast_no_image">Imagem inválida.</string>
     <string name="toast_ocr_failed">Não consegui ler todos os campos — tenta outra foto com mais luz e menos reflexos.</string>
+    <string name="toast_ocr_failed_screen">Não encontrei bem o ecrã azul CUCo — aproxima a câmara e preenche a moldura.</string>
+    <string name="toast_ocr_failed_glare">Não consegui ler todos os campos — tenta reduzir os reflexos no ecrã.</string>
+    <string name="toast_ocr_failed_blur">Não consegui ler todos os campos — tenta manter a câmara mais estável.</string>
 </resources>

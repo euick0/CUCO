@@ -25,6 +25,7 @@ object CucoOcrParser {
         val labelRegex: Regex,
         val minLen: Int,
         val maxLen: Int,
+        val preferredLen: Int,
     )
 
     private data class IndexedOcrLine(
@@ -48,6 +49,7 @@ object CucoOcrParser {
             ),
             minLen = 16,
             maxLen = 64,
+            preferredLen = 32,
         ),
         FieldPattern(
             canonicalName = "certified",
@@ -58,6 +60,7 @@ object CucoOcrParser {
             ),
             minLen = 4,
             maxLen = 16,
+            preferredLen = 8,
         ),
         FieldPattern(
             canonicalName = "usage",
@@ -68,6 +71,7 @@ object CucoOcrParser {
             ),
             minLen = 1,
             maxLen = 16,
+            preferredLen = 8,
         ),
     )
 
@@ -83,6 +87,7 @@ object CucoOcrParser {
     // a reliable positional anchor even when the label text is mangled by OCR.
     private val numberedPrefixRegex = Regex("""^([1-3])\s*[.):]\s*""")
     private val globalHexCandidateRegex = Regex("""[0-9A-Fa-fOolLI]{4,64}""")
+    private val hexOnlyRegex = Regex("""^[0-9A-F]+$""")
 
     fun parse(text: String): CucoFields? {
         val lines = preprocess(text).lines()
@@ -120,6 +125,64 @@ object CucoOcrParser {
         }
 
         return toFieldsOrNull(values)
+    }
+
+    fun parseValueRows(ocrLines: List<OcrLine>, fallbackText: String = ""): CucoFields? {
+        val preparedOcrLines = ocrLines.mapIndexedNotNull { index, line ->
+            val cleanedText = preprocessLine(line.text)
+            if (cleanedText.isBlank()) null else IndexedOcrLine(index, line.copy(text = cleanedText))
+        }
+        val orderedLines = if (preparedOcrLines.any { it.line.hasBounds }) {
+            preparedOcrLines.sortedWith(
+                compareBy<IndexedOcrLine> { it.line.top ?: Int.MAX_VALUE }
+                    .thenBy { it.line.left ?: Int.MAX_VALUE }
+                    .thenBy { it.index }
+            ).map { it.line.text }
+        } else {
+            preprocess(
+                fallbackText.ifBlank {
+                    preparedOcrLines.joinToString("\n") { it.line.text }
+                }
+            ).lines()
+        }
+
+        val orderedCandidates = orderedLines.flatMap { line ->
+            collectHexValues(line, minLen = 1, maxLen = 64)
+        }
+        val serialIndex = orderedCandidates.indexOfFirst { it.length in 16..64 }
+        if (serialIndex < 0) return null
+        val certifiedIndex = orderedCandidates.withIndex()
+            .firstOrNull { (index, value) ->
+                index > serialIndex && value.length in 4..16
+            }
+            ?.index
+            ?: return null
+        val usage = orderedCandidates.withIndex()
+            .firstOrNull { (index, value) ->
+                index > certifiedIndex && value.length in 1..16
+            }
+            ?.value
+            ?: return null
+
+        return toFieldsOrNull(
+            mapOf(
+                "serial" to orderedCandidates[serialIndex],
+                "certified" to orderedCandidates[certifiedIndex],
+                "usage" to usage,
+            )
+        )
+    }
+
+    fun confidenceScore(fields: CucoFields): Int {
+        if (!isValidCandidate(fields)) return 0
+        var score = 20
+        score += lengthScore(fields.serial.length, preferred = 32, min = 16, max = 64, exactPoints = 40)
+        score += lengthScore(fields.certifiedTime.length, preferred = 8, min = 4, max = 16, exactPoints = 20)
+        score += lengthScore(fields.usageCounter.length, preferred = 8, min = 1, max = 16, exactPoints = 20)
+        if (fields.serial.any { it.isDigit() } && fields.serial.any { it in 'A'..'F' }) score += 6
+        if (fields.certifiedTime.any { it.isDigit() }) score += 3
+        if (fields.usageCounter.any { it.isDigit() }) score += 3
+        return score
     }
 
     private fun extractTextualValues(
@@ -164,7 +227,7 @@ object CucoOcrParser {
             val afterLabel = line.substring(labelMatch.range.last + 1)
             val segment = trimAtNextLabel(afterLabel, pattern)
             val candidate = if (segment.contains(':')) segment.substringAfter(':') else segment
-            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
+            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true, pattern.preferredLen)
                 ?.let { return it }
 
             if (!allowContinuation) continue
@@ -174,7 +237,7 @@ object CucoOcrParser {
                 if (next.isBlank()) continue
                 if (isOtherLabelLine(next, pattern)) break
                 if (rejectLineRegex.containsMatchIn(next)) break
-                cleanHex(next, pattern.minLen, pattern.maxLen, fromLabeledValue = false)
+                cleanHex(next, pattern.minLen, pattern.maxLen, fromLabeledValue = false, pattern.preferredLen)
                     ?.let { return it }
                 break
             }
@@ -201,7 +264,7 @@ object CucoOcrParser {
                     segment
                 }
             }
-            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
+            cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true, pattern.preferredLen)
                 ?.let { values[pattern.canonicalName] = it }
         }
     }
@@ -229,6 +292,7 @@ object CucoOcrParser {
                         pattern.minLen,
                         pattern.maxLen,
                         fromLabeledValue = true,
+                        preferredLen = pattern.preferredLen,
                     )?.let { value ->
                         HexCandidate(value, indexedLine.index, indexedLine.index)
                     }
@@ -267,7 +331,7 @@ object CucoOcrParser {
 
         var serialOrder = candidates.firstOrNull { it.value == values["serial"] }?.order ?: -1
         if ("serial" !in values) {
-            val serial = candidates.firstOrNull {
+            val serial = candidates.firstPreferredOrAny(32) {
                 it.value !in usedValues && it.value.length in 16..64
             } ?: return
             values["serial"] = serial.value
@@ -277,7 +341,7 @@ object CucoOcrParser {
 
         var certifiedOrder = candidates.firstOrNull { it.value == values["certified"] }?.order ?: -1
         if ("certified" !in values) {
-            val certified = candidates.firstOrNull {
+            val certified = candidates.firstPreferredOrAny(8) {
                 it.order > serialOrder &&
                     it.value !in usedValues &&
                     it.value.length in 4..16
@@ -288,7 +352,7 @@ object CucoOcrParser {
         }
 
         if ("usage" !in values) {
-            val usage = candidates.firstOrNull {
+            val usage = candidates.firstPreferredOrAny(8) {
                 it.order > certifiedOrder &&
                     it.value !in usedValues &&
                     it.value.length in 1..16
@@ -373,7 +437,13 @@ object CucoOcrParser {
 
     private fun OcrLine.height(): Int = bottom!! - top!!
 
-    private fun cleanHex(raw: String, minLen: Int, maxLen: Int, fromLabeledValue: Boolean): String? {
+    private fun cleanHex(
+        raw: String,
+        minLen: Int,
+        maxLen: Int,
+        fromLabeledValue: Boolean,
+        preferredLen: Int? = null,
+    ): String? {
         val normalized = buildString(raw.length) {
             for (c in raw) {
                 append(
@@ -386,9 +456,11 @@ object CucoOcrParser {
                 )
             }
         }
-        val match = Regex("""[0-9A-F]+""").findAll(normalized)
+        val matches = Regex("""[0-9A-F]+""").findAll(normalized)
             .filter { it.value.length in minLen..maxLen }
-            .maxByOrNull { it.value.length }
+            .toList()
+        val match = matches.firstOrNull { it.value.length == preferredLen }
+            ?: matches.maxByOrNull { it.value.length }
             ?: return null
         val best = match.value
 
@@ -399,10 +471,62 @@ object CucoOcrParser {
         return best
     }
 
+    private fun collectHexValues(raw: String, minLen: Int, maxLen: Int): List<String> {
+        val normalized = buildString(raw.length) {
+            for (c in raw) {
+                append(
+                    when (c) {
+                        'O', 'o' -> '0'
+                        'I', 'l', 'L' -> '1'
+                        in 'a'..'f' -> ('A' + (c - 'a'))
+                        else -> c
+                    }
+                )
+            }
+        }
+        return Regex("""[0-9A-F]+""").findAll(normalized)
+            .map { it.value }
+            .filter { it.length in minLen..maxLen }
+            .toList()
+    }
+
+    private fun lengthScore(
+        length: Int,
+        preferred: Int,
+        min: Int,
+        max: Int,
+        exactPoints: Int,
+    ): Int =
+        when {
+            length == preferred -> exactPoints
+            length in min..max -> exactPoints / 2
+            else -> 0
+        }
+
+    private inline fun List<HexCandidate>.firstPreferredOrAny(
+        preferredLen: Int,
+        predicate: (HexCandidate) -> Boolean,
+    ): HexCandidate? =
+        firstOrNull { predicate(it) && it.value.length == preferredLen }
+            ?: firstOrNull(predicate)
+
     private fun toFieldsOrNull(values: Map<String, String>): CucoFields? {
         val serial = values["serial"] ?: return null
         val certified = values["certified"] ?: return null
         val usage = values["usage"] ?: return null
-        return CucoFields(serial, certified, usage)
+        val fields = CucoFields(serial, certified, usage)
+        return fields.takeIf(::isValidCandidate)
+    }
+
+    private fun isValidCandidate(fields: CucoFields): Boolean {
+        if (!hexOnlyRegex.matches(fields.serial)) return false
+        if (!hexOnlyRegex.matches(fields.certifiedTime)) return false
+        if (!hexOnlyRegex.matches(fields.usageCounter)) return false
+        if (fields.serial.length !in 16..64) return false
+        if (fields.certifiedTime.length !in 4..16) return false
+        if (fields.usageCounter.length !in 1..16) return false
+        if (fields.serial.length <= fields.certifiedTime.length) return false
+        if (fields.serial.length <= fields.usageCounter.length) return false
+        return setOf(fields.serial, fields.certifiedTime, fields.usageCounter).size == 3
     }
 }

@@ -50,7 +50,19 @@ class ScanActivity : AppCompatActivity() {
         recognizer.process(image)
             .addOnSuccessListener { result ->
                 Log.d(TAG, "OCR text:\n${result.text}")
-                val parsed = CucoOcrParser.parse(result.text)
+                val ocrLines = result.textBlocks.flatMap { block ->
+                    block.lines.map { line ->
+                        val box = line.boundingBox
+                        CucoOcrParser.OcrLine(
+                            text = line.text,
+                            left = box?.left,
+                            top = box?.top,
+                            right = box?.right,
+                            bottom = box?.bottom,
+                        )
+                    }
+                }
+                val parsed = CucoOcrParser.parse(ocrLines, result.text)
                 if (parsed == null) {
                     failAndReturn()
                 } else {

@@ -191,7 +191,16 @@ object CucoOcrParser {
 
             val rest = line.substring(match.range.last + 1)
             val segment = trimAtNextLabel(rest, pattern)
-            val candidate = if (segment.contains(':')) segment.substringAfter(':') else segment
+            val candidate = if (segment.contains(':')) {
+                segment.substringAfter(':')
+            } else {
+                val labelMatch = pattern.labelRegex.find(segment)
+                if (labelMatch != null) {
+                    segment.substring(labelMatch.range.last + 1)
+                } else {
+                    segment
+                }
+            }
             cleanHex(candidate, pattern.minLen, pattern.maxLen, fromLabeledValue = true)
                 ?.let { values[pattern.canonicalName] = it }
         }

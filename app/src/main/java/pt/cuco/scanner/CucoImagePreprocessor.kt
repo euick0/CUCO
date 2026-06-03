@@ -12,6 +12,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 object CucoImagePreprocessor {
 
@@ -38,6 +39,13 @@ object CucoImagePreprocessor {
         val issues: Set<ImageQualityIssue>,
     )
 
+    private data class ScreenCorners(
+        val tlX: Float, val tlY: Float,
+        val trX: Float, val trY: Float,
+        val blX: Float, val blY: Float,
+        val brX: Float, val brY: Float,
+    )
+
     fun prepare(context: Context, uri: Uri): Preparation {
         val source = decodeOrientedBitmap(context, uri) ?: return Preparation(
             variants = emptyList(),
@@ -56,7 +64,12 @@ object CucoImagePreprocessor {
         add("source-contrast", contrastGrayscale(source), VariantRole.STRUCTURED_TEXT)
 
         val screen = if (screenRect != null) {
-            crop(source, screenRect)
+            val corners = detectScreenCorners(source, screenRect)
+            if (corners != null) {
+                perspectiveCorrect(source, corners) ?: crop(source, screenRect)
+            } else {
+                crop(source, screenRect)
+            }
         } else {
             cropRelative(source, 0.04f, 0.14f, 0.96f, 0.82f)
         }
@@ -65,6 +78,13 @@ object CucoImagePreprocessor {
             add("screen", screen, VariantRole.STRUCTURED_TEXT)
             add("screen-threshold", highContrastThreshold(screen), VariantRole.STRUCTURED_TEXT)
 
+            val sharpScreen = unsharpMask(screen)
+            add("screen-sharp-threshold", highContrastThreshold(sharpScreen), VariantRole.STRUCTURED_TEXT)
+
+            val bluesup = blueSuppressionGrayscale(screen)
+            add("screen-bluesup", bluesup, VariantRole.STRUCTURED_TEXT)
+            add("screen-bluesup-threshold", highContrastThreshold(bluesup), VariantRole.STRUCTURED_TEXT)
+
             val fieldBand = cropRelative(screen, 0.00f, 0.24f, 0.92f, 0.60f)
             add("field-band", fieldBand, VariantRole.STRUCTURED_TEXT)
             add("field-band-threshold", fieldBand?.let(::highContrastThreshold), VariantRole.STRUCTURED_TEXT)
@@ -72,6 +92,8 @@ object CucoImagePreprocessor {
             val valueColumn = cropRelative(screen, 0.38f, 0.24f, 0.88f, 0.60f)
             add("value-column", valueColumn, VariantRole.VALUE_ROWS)
             add("value-column-threshold", valueColumn?.let(::highContrastThreshold), VariantRole.VALUE_ROWS)
+            add("value-column-sharp-threshold", valueColumn?.let { highContrastThreshold(unsharpMask(it)) }, VariantRole.VALUE_ROWS)
+            add("value-column-bluesup-threshold", valueColumn?.let { highContrastThreshold(blueSuppressionGrayscale(it)) }, VariantRole.VALUE_ROWS)
         }
 
         return Preparation(variants = variants, issues = issues)
@@ -185,6 +207,90 @@ object CucoImagePreprocessor {
             red < 150
     }
 
+    private fun detectScreenCorners(bitmap: Bitmap, rect: Rect): ScreenCorners? {
+        val bandSize = max(5, rect.height() / 15)
+        val step = max(1, rect.width() / 300)
+
+        fun scanBand(yStart: Int, yEnd: Int): Pair<Float, Float>? {
+            var sumLeft = 0f
+            var sumRight = 0f
+            var count = 0
+            for (y in yStart until min(yEnd, bitmap.height)) {
+                if (y < 0) continue
+                var rowLeft = -1
+                var rowRight = -1
+                var x = max(0, rect.left)
+                while (x < min(rect.right, bitmap.width)) {
+                    if (isCucoBlue(bitmap.getPixel(x, y))) {
+                        if (rowLeft < 0) rowLeft = x
+                        rowRight = x
+                    }
+                    x += step
+                }
+                if (rowLeft >= 0) {
+                    sumLeft += rowLeft
+                    sumRight += rowRight
+                    count++
+                }
+            }
+            if (count == 0) return null
+            return (sumLeft / count) to (sumRight / count)
+        }
+
+        val (topL, topR) = scanBand(rect.top, rect.top + bandSize) ?: return null
+        val (botL, botR) = scanBand(rect.bottom - bandSize, rect.bottom) ?: return null
+
+        val leftSkew = abs(topL - botL)
+        val rightSkew = abs(topR - botR)
+        if (leftSkew < rect.width() * 0.02f && rightSkew < rect.width() * 0.02f) return null
+
+        return ScreenCorners(
+            tlX = topL, tlY = rect.top.toFloat(),
+            trX = topR, trY = rect.top.toFloat(),
+            blX = botL, blY = rect.bottom.toFloat(),
+            brX = botR, brY = rect.bottom.toFloat(),
+        )
+    }
+
+    private fun perspectiveCorrect(bitmap: Bitmap, corners: ScreenCorners): Bitmap? {
+        val topWidth = dist(corners.tlX, corners.tlY, corners.trX, corners.trY)
+        val bottomWidth = dist(corners.blX, corners.blY, corners.brX, corners.brY)
+        val leftHeight = dist(corners.tlX, corners.tlY, corners.blX, corners.blY)
+        val rightHeight = dist(corners.trX, corners.trY, corners.brX, corners.brY)
+        val outW = max(topWidth, bottomWidth).roundToInt()
+        val outH = max(leftHeight, rightHeight).roundToInt()
+        if (outW < MIN_OCR_SIDE || outH < MIN_OCR_SIDE) return null
+
+        val srcPixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(srcPixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val outPixels = IntArray(outW * outH)
+        val maxU = max(1, outW - 1).toFloat()
+        val maxV = max(1, outH - 1).toFloat()
+
+        for (dy in 0 until outH) {
+            val v = dy / maxV
+            val v1 = 1f - v
+            for (dx in 0 until outW) {
+                val u = dx / maxU
+                val u1 = 1f - u
+                val srcX = (v1 * (u1 * corners.tlX + u * corners.trX) +
+                    v * (u1 * corners.blX + u * corners.brX)).roundToInt()
+                val srcY = (v1 * (u1 * corners.tlY + u * corners.trY) +
+                    v * (u1 * corners.blY + u * corners.brY)).roundToInt()
+                if (srcX in 0 until bitmap.width && srcY in 0 until bitmap.height) {
+                    outPixels[dy * outW + dx] = srcPixels[srcY * bitmap.width + srcX]
+                }
+            }
+        }
+
+        return Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888).apply {
+            setPixels(outPixels, 0, outW, 0, 0, outW, outH)
+        }
+    }
+
+    private fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float =
+        sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+
     private fun assessQuality(bitmap: Bitmap, screenRect: Rect?): Set<ImageQualityIssue> {
         val issues = mutableSetOf<ImageQualityIssue>()
         if (screenRect == null) {
@@ -293,6 +399,49 @@ object CucoImagePreprocessor {
         }
         output.setPixels(stretched, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         return output
+    }
+
+    private fun unsharpMask(bitmap: Bitmap, strength: Float = 0.6f): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val src = IntArray(w * h)
+        bitmap.getPixels(src, 0, w, 0, 0, w, h)
+        val lum = IntArray(src.size) { luminance(src[it]) }
+        val out = IntArray(src.size)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val idx = y * w + x
+                val center = lum[idx]
+                val left = if (x > 0) lum[idx - 1] else center
+                val right = if (x < w - 1) lum[idx + 1] else center
+                val above = if (y > 0) lum[idx - w] else center
+                val below = if (y < h - 1) lum[idx + w] else center
+                val neighbours = (left + right + above + below) / 4
+                val sharp = (center + (center - neighbours) * strength)
+                    .roundToInt().coerceIn(0, 255)
+                out[idx] = Color.rgb(sharp, sharp, sharp)
+            }
+        }
+        return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+            setPixels(out, 0, w, 0, 0, w, h)
+        }
+    }
+
+    private fun blueSuppressionGrayscale(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        val out = IntArray(pixels.size)
+        for (i in pixels.indices) {
+            val r = Color.red(pixels[i])
+            val g = Color.green(pixels[i])
+            val gray = (r * 0.3f + g * 0.7f).roundToInt().coerceIn(0, 255)
+            out[i] = Color.rgb(gray, gray, gray)
+        }
+        return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+            setPixels(out, 0, w, 0, 0, w, h)
+        }
     }
 
     private fun highContrastThreshold(bitmap: Bitmap): Bitmap {

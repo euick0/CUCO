@@ -1,9 +1,11 @@
 package pt.cuco.scanner
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -12,7 +14,12 @@ import pt.cuco.scanner.databinding.ActivityWebviewBinding
 class WebViewActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityWebviewBinding
-    private lateinit var fillJs: String
+
+    private var currentSerial = ""
+    private var currentCtime = ""
+    private var currentUsage = ""
+
+    private var currentHistoryId = -1L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -20,11 +27,11 @@ class WebViewActivity : AppCompatActivity() {
         binding = ActivityWebviewBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val serial = intent.getStringExtra(EXTRA_SERIAL).orEmpty()
-        val ctime = intent.getStringExtra(EXTRA_CTIME).orEmpty()
-        val usage = intent.getStringExtra(EXTRA_USAGE).orEmpty()
+        currentSerial = intent.getStringExtra(EXTRA_SERIAL).orEmpty()
+        currentCtime = intent.getStringExtra(EXTRA_CTIME).orEmpty()
+        currentUsage = intent.getStringExtra(EXTRA_USAGE).orEmpty()
 
-        fillJs = FillFormJs.build(serial, ctime, usage)
+        recordHistory()
 
         binding.webview.settings.apply {
             javaScriptEnabled = true
@@ -32,6 +39,8 @@ class WebViewActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             useWideViewPort = true
         }
+
+        binding.webview.addJavascriptInterface(CucoInterface(), "CUCO")
 
         binding.webview.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
@@ -45,23 +54,78 @@ class WebViewActivity : AppCompatActivity() {
 
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                 Log.d(TAG, "doUpdateVisitedHistory url=$url reload=$isReload")
+                if (url != null && url != "about:blank" && !url.startsWith(CUCO_URL)) {
+                    HistoryRepository.updateStatus(
+                        this@WebViewActivity,
+                        currentHistoryId,
+                        HistoryEntry.STATUS_SUBMITTED,
+                    )
+                }
                 evaluate(view)
             }
+        }
+
+        binding.btnBack.setOnClickListener { navigateToMain() }
+        binding.btnHistory.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
         }
 
         binding.webview.loadUrl(CUCO_URL)
     }
 
     private fun evaluate(view: WebView) {
-        view.evaluateJavascript(fillJs) { result ->
+        val js = FillFormJs.build(currentSerial, currentCtime, currentUsage)
+        view.evaluateJavascript(js) { result ->
             Log.d(TAG, "fill result=$result")
         }
+    }
+
+    private fun recordHistory() {
+        val now = System.currentTimeMillis()
+        HistoryRepository.addEntry(
+            this,
+            HistoryEntry(
+                id = now,
+                serial = currentSerial,
+                ctime = currentCtime,
+                usage = currentUsage,
+                timestamp = now,
+                status = HistoryEntry.STATUS_PENDING,
+            ),
+        )
+        currentHistoryId = now
+    }
+
+    private fun navigateToMain() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+        finish()
     }
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (binding.webview.canGoBack()) binding.webview.goBack()
-        else super.onBackPressed()
+        else navigateToMain()
+    }
+
+    inner class CucoInterface {
+        @JavascriptInterface
+        fun onFieldChanged(field: String, value: String) {
+            Log.d(TAG, "onFieldChanged field=$field value=$value")
+            runOnUiThread {
+                val changed = when (field) {
+                    "serial" -> (value != currentSerial).also { currentSerial = value }
+                    "ctime" -> (value != currentCtime).also { currentCtime = value }
+                    "usage" -> (value != currentUsage).also { currentUsage = value }
+                    else -> false
+                }
+                if (changed) {
+                    recordHistory()
+                }
+            }
+        }
     }
 
     companion object {

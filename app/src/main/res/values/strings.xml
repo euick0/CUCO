@@ -18,4 +18,17 @@
     <string name="toast_ocr_failed_screen">Não encontrei bem o ecrã azul CUCo — aproxima a câmara e preenche a moldura.</string>
     <string name="toast_ocr_failed_glare">Não consegui ler todos os campos — tenta reduzir os reflexos no ecrã.</string>
     <string name="toast_ocr_failed_blur">Não consegui ler todos os campos — tenta manter a câmara mais estável.</string>
+    <string name="btn_back_to_app">Voltar à aplicação</string>
+    <string name="btn_history">Histórico</string>
+    <string name="history_title">Histórico de leituras</string>
+    <string name="history_empty">Sem histórico</string>
+    <string name="status_submitted">Enviado</string>
+    <string name="status_pending">Pendente</string>
+    <string name="history_delete_confirm_title">Apagar entrada</string>
+    <string name="history_delete_confirm_message">Tens a certeza que queres apagar esta entrada?</string>
+    <string name="history_delete_confirm_ok">Apagar</string>
+    <string name="history_delete_confirm_cancel">Cancelar</string>
+    <string name="content_desc_history">Ver histórico de leituras</string>
+    <string name="history_field_ctime">Tempo: %1$s</string>
+    <string name="history_field_usage">Contador: %1$s</string>
 </resources>

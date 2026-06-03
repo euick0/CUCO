@@ -65,6 +65,10 @@ class MainActivity : AppCompatActivity() {
                 )
             )
         }
+
+        binding.btnHistory.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
+        }
     }
 
     private fun launchCamera() {

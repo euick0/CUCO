@@ -150,6 +150,20 @@ object FillFormJs {
     return null;
   }
 
+  function attachListener(el, fieldName) {
+    if (!el || el.__cucoListening) return;
+    el.__cucoListening = true;
+    function onChange() {
+      try {
+        if (window.CUCO && typeof window.CUCO.onFieldChanged === 'function') {
+          window.CUCO.onFieldChanged(fieldName, el.value);
+        }
+      } catch (e) {}
+    }
+    try { el.addEventListener('change', onChange); } catch (e) {}
+    try { el.addEventListener('blur', onChange); } catch (e) {}
+  }
+
   function tryFill() {
     var v = window.__cucoFillerValues || values;
 
@@ -188,13 +202,13 @@ object FillFormJs {
     ], ['time', 'certified', 'tempo', 'certificada', 'hora']);
 
     if (!filled.serial && serialEl && fillable(serialEl)) {
-      if (setVal(serialEl, v.serial)) filled.serial = true;
+      if (setVal(serialEl, v.serial)) { filled.serial = true; attachListener(serialEl, 'serial'); }
     }
     if (!filled.ctime && ctimeEl && fillable(ctimeEl)) {
-      if (setVal(ctimeEl, v.ctime)) filled.ctime = true;
+      if (setVal(ctimeEl, v.ctime)) { filled.ctime = true; attachListener(ctimeEl, 'ctime'); }
     }
     if (!filled.usage && usageEl && fillable(usageEl)) {
-      if (setVal(usageEl, v.usage)) filled.usage = true;
+      if (setVal(usageEl, v.usage)) { filled.usage = true; attachListener(usageEl, 'usage'); }
     }
 
     return filled.serial && filled.ctime && filled.usage;

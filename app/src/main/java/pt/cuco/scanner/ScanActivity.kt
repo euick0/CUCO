@@ -168,19 +168,35 @@ class ScanActivity : AppCompatActivity() {
     }
 
     private fun consensusAttempt(attempts: List<OcrAttempt>): OcrAttempt? {
-        val serial = attempts.bestVotedValue { it.fields.serial } ?: return null
-        val certified = attempts.bestVotedValue { it.fields.certifiedTime } ?: return null
-        val usage = attempts.bestVotedValue { it.fields.usageCounter } ?: return null
+        val serial = charLevelVote(attempts) { it.fields.serial } ?: return null
+        val certified = charLevelVote(attempts) { it.fields.certifiedTime } ?: return null
+        val usage = charLevelVote(attempts) { it.fields.usageCounter } ?: return null
         val fields = CucoOcrParser.CucoFields(serial, certified, usage)
         val score = CucoOcrParser.confidenceScore(fields)
         if (score == 0) return null
         return OcrAttempt(fields, source = "consensus", score = score + 12)
     }
 
-    private fun List<OcrAttempt>.bestVotedValue(selector: (OcrAttempt) -> String): String? =
-        groupBy(selector)
-            .maxByOrNull { entry -> entry.value.sumOf { it.score } }
-            ?.key
+    private fun charLevelVote(
+        attempts: List<OcrAttempt>,
+        selector: (OcrAttempt) -> String,
+    ): String? {
+        if (attempts.isEmpty()) return null
+        val pairs = attempts.map { selector(it) to it.score }
+        val majorityLen = pairs.groupingBy { it.first.length }.eachCount()
+            .maxByOrNull { it.value }?.key ?: return null
+        val matching = pairs.filter { it.first.length == majorityLen }
+        if (matching.size < 2) return matching.firstOrNull()?.first
+        return buildString(majorityLen) {
+            for (i in 0 until majorityLen) {
+                val charScores = mutableMapOf<Char, Int>()
+                for ((value, score) in matching) {
+                    charScores[value[i]] = (charScores[value[i]] ?: 0) + score
+                }
+                append(charScores.maxByOrNull { it.value }!!.key)
+            }
+        }
+    }
 
     private fun openWebView(fields: CucoOcrParser.CucoFields) {
         val intent = Intent(this, WebViewActivity::class.java).apply {

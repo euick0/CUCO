@@ -20,6 +20,7 @@ class WebViewActivity : AppCompatActivity() {
     private var currentUsage = ""
 
     private var currentHistoryId = -1L
+    private var currentHistorySubmitted = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,13 +55,6 @@ class WebViewActivity : AppCompatActivity() {
 
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                 Log.d(TAG, "doUpdateVisitedHistory url=$url reload=$isReload")
-                if (url != null && url != "about:blank" && !url.startsWith(CUCO_URL)) {
-                    HistoryRepository.updateStatus(
-                        this@WebViewActivity,
-                        currentHistoryId,
-                        HistoryEntry.STATUS_SUBMITTED,
-                    )
-                }
                 evaluate(view)
             }
         }
@@ -94,6 +88,7 @@ class WebViewActivity : AppCompatActivity() {
             ),
         )
         currentHistoryId = now
+        currentHistorySubmitted = false
     }
 
     private fun navigateToMain() {
@@ -124,6 +119,20 @@ class WebViewActivity : AppCompatActivity() {
                 if (changed) {
                     recordHistory()
                 }
+            }
+        }
+
+        @JavascriptInterface
+        fun onSubmissionSuccess() {
+            Log.d(TAG, "onSubmissionSuccess")
+            runOnUiThread {
+                if (currentHistorySubmitted) return@runOnUiThread
+                HistoryRepository.updateStatus(
+                    this@WebViewActivity,
+                    currentHistoryId,
+                    HistoryEntry.STATUS_SUBMITTED,
+                )
+                currentHistorySubmitted = true
             }
         }
     }

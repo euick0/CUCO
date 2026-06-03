@@ -7,6 +7,7 @@ object FillFormJs {
     private const val TEMPLATE = """
 (function(serial, ctime, usage) {
   var values = { serial: serial, ctime: ctime, usage: usage };
+  var successNeedle = 'O novo código de desbloqueio é';
 
   if (window.__cucoFillerInstalled) {
     window.__cucoFillerValues = values;
@@ -17,6 +18,7 @@ object FillFormJs {
   }
   window.__cucoFillerInstalled = true;
   window.__cucoFillerValues = values;
+  window.__cucoSubmissionSuccessSeen = window.__cucoSubmissionSuccessSeen || false;
 
   var filled = { serial: false, ctime: false, usage: false };
 
@@ -101,6 +103,35 @@ object FillFormJs {
   function textOf(node) {
     if (!node) return '';
     return node.innerText || node.textContent || '';
+  }
+
+  function normalizedText(value) {
+    return (value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function checkSubmissionSuccess() {
+    if (window.__cucoSubmissionSuccessSeen) return true;
+    var roots = collectRoots();
+    var needle = normalizedText(successNeedle);
+    for (var r = 0; r < roots.length; r++) {
+      var root = roots[r];
+      var pageText = '';
+      try {
+        pageText = textOf(root.body || root.documentElement || root);
+      } catch (e) {
+        try { pageText = textOf(root); } catch (ignored) {}
+      }
+      if (normalizedText(pageText).indexOf(needle) >= 0) {
+        window.__cucoSubmissionSuccessSeen = true;
+        try {
+          if (window.CUCO && typeof window.CUCO.onSubmissionSuccess === 'function') {
+            window.CUCO.onSubmissionSuccess();
+          }
+        } catch (e) {}
+        return true;
+      }
+    }
+    return false;
   }
 
   function haystackFor(inp) {
@@ -217,13 +248,18 @@ object FillFormJs {
   window.__cucoFillerTick = function() {
     filled = { serial: false, ctime: false, usage: false };
     tryFill();
+    checkSubmissionSuccess();
   };
 
   tryFill();
+  checkSubmissionSuccess();
 
   var observer;
   try {
-    observer = new MutationObserver(function() { tryFill(); });
+    observer = new MutationObserver(function() {
+      tryFill();
+      checkSubmissionSuccess();
+    });
     observer.observe(document.documentElement || document.body || document, {
       childList: true, subtree: true, attributes: true,
       attributeFilter: ['id', 'name', 'class', 'value']
@@ -234,9 +270,10 @@ object FillFormJs {
   var interval = setInterval(function() {
     ticks++;
     var done = tryFill();
-    if (done || ticks > 60) {
+    var success = checkSubmissionSuccess();
+    if (success || done || ticks > 60) {
       clearInterval(interval);
-      if (done && observer) {
+      if ((success || done) && observer) {
         try { observer.disconnect(); } catch (e) {}
       }
     }

@@ -86,11 +86,7 @@ class HistoryActivity : AppCompatActivity() {
             val tvDate = view.findViewById<TextView>(R.id.tv_date)
             val tvStatus = view.findViewById<TextView>(R.id.tv_status)
 
-            tvSerial.text = if (entry.serial.length > 16) {
-                entry.serial.take(16) + "…"
-            } else {
-                entry.serial
-            }
+            tvSerial.text = entry.serial
             tvCtime.text = context.getString(R.string.history_field_ctime, entry.ctime)
             tvUsage.text = context.getString(R.string.history_field_usage, entry.usage)
             tvDate.text = dateFormat.format(Date(entry.timestamp))

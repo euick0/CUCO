@@ -3,6 +3,7 @@ package pt.cuco.scanner
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.webkit.JavascriptInterface
@@ -64,7 +65,7 @@ class WebViewActivity : AppCompatActivity() {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
 
-        binding.webview.loadUrl(CUCO_URL)
+        binding.webview.loadUrl(buildCucoUrl(currentSerial))
     }
 
     private fun evaluate(view: WebView) {
@@ -142,6 +143,25 @@ class WebViewActivity : AppCompatActivity() {
         const val EXTRA_SERIAL = "serial"
         const val EXTRA_CTIME = "ctime"
         const val EXTRA_USAGE = "usage"
-        private const val CUCO_URL = "https://cuco.inforlandia.pt/ucode/"
+
+        private const val CUCO_BASE_URL = "https://cuco.inforlandia.pt/ucode/"
+        private const val CUCO_CLIENT = "secretaria-geral da educação e ciência"
+        private const val CUCO_LANG = "pt"
+
+        /**
+         * The CUCo page now reads the machine serial number from the `l` query
+         * parameter (the last 32 hex chars of the URL) instead of a form input,
+         * e.g. `.../ucode/?client=...&lang=pt&l=5FB52B0D4B514DE2E91D8CAC116E8EF9`.
+         * Certified Time and Usage Counter are still filled in the form via JS.
+         */
+        fun buildCucoUrl(serial: String): String {
+            val builder = Uri.parse(CUCO_BASE_URL).buildUpon()
+                .appendQueryParameter("client", CUCO_CLIENT)
+                .appendQueryParameter("lang", CUCO_LANG)
+            if (serial.isNotEmpty()) {
+                builder.appendQueryParameter("l", serial)
+            }
+            return builder.build().toString()
+        }
     }
 }

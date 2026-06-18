@@ -30,11 +30,19 @@
         </activity>
 
         <activity
+            android:name=".CameraActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ScanActivity"
             android:exported="false" />
 
         <activity
             android:name=".WebViewActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".HistoryActivity"
             android:exported="false" />
 
         <provider

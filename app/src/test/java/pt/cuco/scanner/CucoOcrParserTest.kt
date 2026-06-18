@@ -130,6 +130,73 @@ class CucoOcrParserTest {
     }
 
     @Test
+    fun parsesColumnSplitTextFromRealPhotoOcrOrder() {
+        val text = """
+            O seu computador esta bloqueado pela seguranca CUCo
+            Aceda a iland.pt/suportecuco ou contacte o suporte Inforlandia para ajuda.
+
+            1. Machine Serial Number :
+            2. Certified Time
+            3. Usage Counter
+            : 9F0D5D448916710C6053779DCBC24EA9
+            : 1D293962
+            : 00000001
+
+            Enter Unblocking Code: _
+        """.trimIndent()
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun parsesSpatiallySeparatedRowsFromStructuredOcr() {
+        val lines = listOf(
+            CucoOcrParser.OcrLine("1. Machine Serial Number :", 20, 100, 360, 130),
+            CucoOcrParser.OcrLine("2. Certified Time", 20, 150, 280, 180),
+            CucoOcrParser.OcrLine("3. Usage Counter", 20, 200, 280, 230),
+            CucoOcrParser.OcrLine(": 1D293962", 520, 150, 700, 180),
+            CucoOcrParser.OcrLine(": 00000001", 520, 200, 700, 230),
+            CucoOcrParser.OcrLine(": 9F0D5D448916710C6053779DCBC24EA9", 520, 100, 1160, 130),
+        )
+
+        val fields = CucoOcrParser.parse(lines)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun parsesValueOnlyRowsFromCroppedOcr() {
+        val lines = listOf(
+            CucoOcrParser.OcrLine(": 9F0D5D448916710C6053779DCBC24EA9", 20, 100, 760, 130),
+            CucoOcrParser.OcrLine(": 1D293962", 20, 150, 210, 180),
+            CucoOcrParser.OcrLine(": 00000001", 20, 200, 210, 230),
+        )
+
+        val fields = CucoOcrParser.parseValueRows(lines)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun rejectsDuplicateFieldValues() {
+        val text = """
+            1. Machine Serial Number : 9F0D5D448916710C6053779DCBC24EA9
+            2. Certified Time        : 1D293962
+            3. Usage Counter         : 1D293962
+        """.trimIndent()
+
+        assertNull(CucoOcrParser.parse(text))
+    }
+
+    @Test
     fun ignoresUnblockingCodeNoise() {
         // If the Certified Time value gets dropped by OCR, the parser must NOT
         // fall through to the "Enter Unblocking Code" line (where "Code" would
@@ -139,6 +206,20 @@ class CucoOcrParserTest {
             2. Certified Time        :
             3. Usage Counter         : 00000001
             Enter Unblocking Code: _
+        """.trimIndent()
+
+        assertNull(CucoOcrParser.parse(text))
+    }
+
+    @Test
+    fun doesNotInferGlobalCandidatesWithoutCucoAnchors() {
+        val text = """
+            1. unrelated heading
+            2. another note
+            3. final note
+            9F0D5D448916710C6053779DCBC24EA9
+            1D293962
+            00000001
         """.trimIndent()
 
         assertNull(CucoOcrParser.parse(text))

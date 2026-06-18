@@ -15,9 +15,13 @@ Counter são removidos (ex. `00000001` → `1`).
    Recognition](https://developers.google.com/ml-kit/vision/text-recognition)
    on-device sobre a imagem e usa `CucoOcrParser` para isolar os 3
    valores hex.
-3. **WebViewActivity** — carrega o site CUCo e injecta JavaScript que
-   procura os 3 inputs por keywords (`serial`, `certified`, `usage`) em
-   `name`/`id`/`placeholder`/`aria-label`/label-associado/sibling e
+3. **WebViewActivity** — carrega o site CUCo já com o número de série no
+   URL. A página passou a ler o serial do parâmetro `l` (os últimos 32
+   caracteres hex do URL), por isso a app abre
+   `…/ucode/?client=…&lang=pt&l=<SERIAL>`. O `Certified Time` e o
+   `Usage Counter` continuam a ser preenchidos no formulário via
+   JavaScript, que procura os inputs por keywords (`certified`, `usage`)
+   em `name`/`id`/`placeholder`/`aria-label`/label-associado/sibling e
    atribui os valores, disparando eventos `input`/`change`.
 
 ## Build
@@ -47,3 +51,6 @@ Para os testes do parser (JVM, não precisa de dispositivo):
 - Se a estrutura do form em `cuco.inforlandia.pt/ucode/` mudar e a
   injecção JS deixar de encontrar algum input, ajusta as keywords ou
   selectores em `FillFormJs.kt`.
+- O URL base, o `client` e o parâmetro `l` (serial) são construídos em
+  `WebViewActivity.buildCucoUrl()`. Se o `client` ou o formato do URL
+  mudarem, ajusta aí.

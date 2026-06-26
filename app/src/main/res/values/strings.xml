@@ -31,4 +31,22 @@
     <string name="content_desc_history">Ver histórico de leituras</string>
     <string name="history_field_ctime">Tempo: %1$s</string>
     <string name="history_field_usage">Contador: %1$s</string>
+    <string name="btn_settings">Definições do URL</string>
+    <string name="settings_title">Definições do URL CUCo</string>
+    <string name="settings_explainer">O endereço do site CUCo já mudou várias vezes. Ajusta aqui o cliente, o idioma ou o URL base se voltar a mudar.</string>
+    <string name="settings_client_hint">client (ex. jpik_tipo1)</string>
+    <string name="settings_lang_hint">lang (ex. pt)</string>
+    <string name="settings_base_url_hint">URL base (ex. https://cuco.inforlandia.pt/ucode/)</string>
+    <string name="settings_import_explainer">Ou cola aqui um URL CUCo completo para importar automaticamente o client, o idioma e (se existir) o número de série.</string>
+    <string name="settings_import_hint">Colar URL completo</string>
+    <string name="settings_import_button">Importar do URL</string>
+    <string name="settings_import_invalid">URL inválido.</string>
+    <string name="settings_import_done">Importado. Confirma os campos e guarda.</string>
+    <string name="settings_import_open_title">Abrir este código?</string>
+    <string name="settings_import_open_message">O URL contém o número de série %1$s. Queres abrir o site com este código?</string>
+    <string name="settings_import_open_ok">Abrir</string>
+    <string name="settings_save">Guardar</string>
+    <string name="settings_saved">Definições guardadas.</string>
+    <string name="settings_reset">Repor predefinições</string>
+    <string name="settings_reset_done">Predefinições repostas.</string>
 </resources>

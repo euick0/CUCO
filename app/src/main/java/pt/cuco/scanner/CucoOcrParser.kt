@@ -89,6 +89,13 @@ object CucoOcrParser {
     private val globalHexCandidateRegex = Regex("""[0-9A-Fa-fOolLI]{4,64}""")
     private val hexOnlyRegex = Regex("""^[0-9A-F]+$""")
 
+    // A serial shorter than this is treated as possibly truncated (the real
+    // serial is 32 chars); joining stops once we reach it. A wrapped half is
+    // ~16 chars, so continuation chunks must be at least MIN_WRAP_PART long to
+    // avoid swallowing a short Certified Time / Usage Counter value.
+    private const val SERIAL_WRAP_THRESHOLD = 28
+    private const val MIN_WRAP_PART = 12
+
     fun parse(text: String): CucoFields? {
         val lines = preprocess(text).lines()
         val values = extractTextualValues(lines, allowContinuation = true)
@@ -97,6 +104,7 @@ object CucoOcrParser {
             inferMissingFromGlobalCandidates(lines, values)
         }
 
+        repairSerial(values, lines.flatMap { collectHexValues(it, minLen = 1, maxLen = 64) })
         return toFieldsOrNull(values)
     }
 
@@ -124,6 +132,7 @@ object CucoOcrParser {
             inferMissingFromGlobalCandidates(fallbackLines, values)
         }
 
+        repairSerial(values, orderedHexCandidates(preparedOcrLines, fallbackLines))
         return toFieldsOrNull(values)
     }
 
@@ -132,28 +141,31 @@ object CucoOcrParser {
             val cleanedText = preprocessLine(line.text)
             if (cleanedText.isBlank()) null else IndexedOcrLine(index, line.copy(text = cleanedText))
         }
-        val orderedLines = if (preparedOcrLines.any { it.line.hasBounds }) {
-            preparedOcrLines.sortedWith(
-                compareBy<IndexedOcrLine> { it.line.top ?: Int.MAX_VALUE }
-                    .thenBy { it.line.left ?: Int.MAX_VALUE }
-                    .thenBy { it.index }
-            ).map { it.line.text }
-        } else {
-            preprocess(
-                fallbackText.ifBlank {
-                    preparedOcrLines.joinToString("\n") { it.line.text }
-                }
-            ).lines()
-        }
+        val fallbackLines = preprocess(
+            fallbackText.ifBlank {
+                preparedOcrLines.joinToString("\n") { it.line.text }
+            }
+        ).lines()
 
-        val orderedCandidates = orderedLines.flatMap { line ->
-            collectHexValues(line, minLen = 1, maxLen = 64)
-        }
+        val orderedCandidates = orderedHexCandidates(preparedOcrLines, fallbackLines)
         val serialIndex = orderedCandidates.indexOfFirst { it.length in 16..64 }
         if (serialIndex < 0) return null
+
+        // The 32-char serial wraps to two ~16-char rows on the CUCo LCD; rebuild
+        // it from consecutive value chunks instead of keeping just the first half.
+        var serialValue = orderedCandidates[serialIndex]
+        var afterSerialIndex = serialIndex
+        if (serialValue.length < SERIAL_WRAP_THRESHOLD) {
+            val (joined, lastIndex) = joinWrappedSerial(orderedCandidates, serialIndex, emptySet())
+            if (joined.length >= SERIAL_WRAP_THRESHOLD && joined.length in 16..64) {
+                serialValue = joined
+                afterSerialIndex = lastIndex
+            }
+        }
+
         val certifiedIndex = orderedCandidates.withIndex()
             .firstOrNull { (index, value) ->
-                index > serialIndex && value.length in 4..16
+                index > afterSerialIndex && value.length in 4..16
             }
             ?.index
             ?: return null
@@ -166,11 +178,77 @@ object CucoOcrParser {
 
         return toFieldsOrNull(
             mapOf(
-                "serial" to orderedCandidates[serialIndex],
+                "serial" to serialValue,
                 "certified" to orderedCandidates[certifiedIndex],
                 "usage" to usage,
             )
         )
+    }
+
+    /** Hex value chunks across all lines, in reading order (top→bottom, left→right). */
+    private fun orderedHexCandidates(
+        preparedOcrLines: List<IndexedOcrLine>,
+        fallbackLines: List<String>,
+    ): List<String> {
+        val orderedLines = if (preparedOcrLines.any { it.line.hasBounds }) {
+            preparedOcrLines.sortedWith(
+                compareBy<IndexedOcrLine> { it.line.top ?: Int.MAX_VALUE }
+                    .thenBy { it.line.left ?: Int.MAX_VALUE }
+                    .thenBy { it.index }
+            ).map { it.line.text }
+        } else {
+            fallbackLines
+        }
+        return orderedLines.flatMap { collectHexValues(it, minLen = 1, maxLen = 64) }
+    }
+
+    /**
+     * Fixes a machine serial number that OCR cut mid-code: the 32-char serial
+     * wraps to two ~16-char lines on the LCD, and a single ≥16-char half passes
+     * validation, so only one half is kept. Starting from the assigned serial, we
+     * append following hex chunks that look like serial continuations until we get
+     * back to ~32 characters.
+     */
+    private fun repairSerial(values: MutableMap<String, String>, orderedCandidates: List<String>) {
+        val serial = values["serial"] ?: return
+        if (serial.length >= SERIAL_WRAP_THRESHOLD) return
+        val startIndex = orderedCandidates.indexOf(serial)
+        if (startIndex < 0) return
+
+        val excluded = setOfNotNull(values["certified"], values["usage"])
+        val (joined, _) = joinWrappedSerial(orderedCandidates, startIndex, excluded)
+        if (joined.length >= SERIAL_WRAP_THRESHOLD &&
+            joined.length in 16..64 &&
+            joined.length > serial.length
+        ) {
+            values["serial"] = joined
+        }
+    }
+
+    /**
+     * Concatenates the chunk at [startIndex] with the following chunks while they
+     * look like serial continuations (long enough, not an already-identified
+     * field) until reaching [SERIAL_WRAP_THRESHOLD]. Returns the joined value and
+     * the index of the last chunk consumed.
+     */
+    private fun joinWrappedSerial(
+        candidates: List<String>,
+        startIndex: Int,
+        excluded: Set<String>,
+    ): Pair<String, Int> {
+        val builder = StringBuilder(candidates[startIndex])
+        var lastIndex = startIndex
+        var k = startIndex + 1
+        while (k < candidates.size && builder.length < SERIAL_WRAP_THRESHOLD) {
+            val next = candidates[k]
+            if (next.length < MIN_WRAP_PART) break
+            if (next in excluded) break
+            if (builder.length + next.length > 64) break
+            builder.append(next)
+            lastIndex = k
+            k++
+        }
+        return builder.toString() to lastIndex
     }
 
     fun confidenceScore(fields: CucoFields): Int {

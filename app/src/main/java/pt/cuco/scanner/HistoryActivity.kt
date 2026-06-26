@@ -41,6 +41,8 @@ class HistoryActivity : AppCompatActivity() {
                 putExtra(WebViewActivity.EXTRA_SERIAL, entry.serial)
                 putExtra(WebViewActivity.EXTRA_CTIME, entry.ctime)
                 putExtra(WebViewActivity.EXTRA_USAGE, entry.usage)
+                // Reuse this entry instead of creating a duplicate history row.
+                putExtra(WebViewActivity.EXTRA_HISTORY_ID, entry.id)
             }
             startActivity(intent)
             finish()

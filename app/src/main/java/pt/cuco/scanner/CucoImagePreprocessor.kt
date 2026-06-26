@@ -85,11 +85,14 @@ object CucoImagePreprocessor {
             add("screen-bluesup", bluesup, VariantRole.STRUCTURED_TEXT)
             add("screen-bluesup-threshold", highContrastThreshold(bluesup), VariantRole.STRUCTURED_TEXT)
 
-            val fieldBand = cropRelative(screen, 0.00f, 0.24f, 0.92f, 0.60f)
+            // Keep the full right edge: a long serial (or its wrapped second
+            // line) can reach the screen border, and cropping it short was
+            // truncating the machine serial number mid-code.
+            val fieldBand = cropRelative(screen, 0.00f, 0.22f, 0.98f, 0.66f)
             add("field-band", fieldBand, VariantRole.STRUCTURED_TEXT)
             add("field-band-threshold", fieldBand?.let(::highContrastThreshold), VariantRole.STRUCTURED_TEXT)
 
-            val valueColumn = cropRelative(screen, 0.38f, 0.24f, 0.88f, 0.60f)
+            val valueColumn = cropRelative(screen, 0.34f, 0.22f, 0.98f, 0.66f)
             add("value-column", valueColumn, VariantRole.VALUE_ROWS)
             add("value-column-threshold", valueColumn?.let(::highContrastThreshold), VariantRole.VALUE_ROWS)
             add("value-column-sharp-threshold", valueColumn?.let { highContrastThreshold(unsharpMask(it)) }, VariantRole.VALUE_ROWS)

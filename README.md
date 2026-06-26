@@ -22,7 +22,21 @@ Counter são removidos (ex. `00000001` → `1`).
    `Usage Counter` continuam a ser preenchidos no formulário via
    JavaScript, que procura os inputs por keywords (`certified`, `usage`)
    em `name`/`id`/`placeholder`/`aria-label`/label-associado/sibling e
-   atribui os valores, disparando eventos `input`/`change`.
+   atribui os valores, disparando eventos `input`/`change`. As edições
+   feitas no formulário são lembradas e reaplicadas após recargas da
+   página; corrigir o serial recarrega o URL com o novo `l=`.
+
+O `client`, o idioma e o URL base são **editáveis na app** (ecrã de
+**Definições**), e podes **colar um URL completo** para os importar — útil
+porque o endereço do CUCo já mudou várias vezes. Os predefinidos são
+`client=jpik_tipo1`, `lang=pt` e `https://cuco.inforlandia.pt/ucode/`.
+
+## Documentação
+
+- [`CLAUDE.md`](CLAUDE.md) — arquitetura, mapa de classes e contrato do URL
+  (para uso por IA / contribuidores).
+- [`docs/FEATURES.md`](docs/FEATURES.md) — lista de funcionalidades e
+  comportamento esperado.
 
 ## Build
 

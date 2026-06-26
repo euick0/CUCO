@@ -66,6 +66,77 @@ class CucoOcrParserTest {
     }
 
     @Test
+    fun reassemblesSerialWrappedAcrossTwoLines() {
+        // The 32-char serial wraps to two 16-char rows on the LCD. The parser
+        // must rebuild the full serial, not keep only the first half.
+        val text = """
+            1. Machine Serial Number : 9F0D5D448916710C
+            6053779DCBC24EA9
+            2. Certified Time : 1D293962
+            3. Usage Counter : 00000001
+        """.trimIndent()
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun reassemblesSerialWrappedBelowLabel() {
+        val text = """
+            1. Machine Serial Number :
+            9F0D5D448916710C
+            6053779DCBC24EA9
+            2. Certified Time : 1D293962
+            3. Usage Counter : 00000001
+        """.trimIndent()
+
+        val fields = CucoOcrParser.parse(text)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun reassemblesSerialWrappedInSpatialOcr() {
+        // Simulates a real photo: the serial value is split into two spatial
+        // lines (first half to the right of the label, second half on the row
+        // below). Without repair only the first 16 chars survive.
+        val lines = listOf(
+            CucoOcrParser.OcrLine("1. Machine Serial Number :", 20, 100, 360, 130),
+            CucoOcrParser.OcrLine("9F0D5D448916710C", 380, 100, 760, 130),
+            CucoOcrParser.OcrLine("6053779DCBC24EA9", 380, 150, 760, 180),
+            CucoOcrParser.OcrLine("2. Certified Time : 1D293962", 20, 210, 700, 240),
+            CucoOcrParser.OcrLine("3. Usage Counter : 00000001", 20, 260, 700, 290),
+        )
+
+        val fields = CucoOcrParser.parse(lines)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
+    fun reassemblesSerialWrappedInValueRows() {
+        val lines = listOf(
+            CucoOcrParser.OcrLine("9F0D5D448916710C", 20, 100, 400, 130),
+            CucoOcrParser.OcrLine("6053779DCBC24EA9", 20, 150, 400, 180),
+            CucoOcrParser.OcrLine("1D293962", 20, 200, 210, 230),
+            CucoOcrParser.OcrLine("00000001", 20, 250, 210, 280),
+        )
+
+        val fields = CucoOcrParser.parseValueRows(lines)
+        assertNotNull(fields)
+        assertEquals("9F0D5D448916710C6053779DCBC24EA9", fields!!.serial)
+        assertEquals("1D293962", fields.certifiedTime)
+        assertEquals("00000001", fields.usageCounter)
+    }
+
+    @Test
     fun parsesUsageTimeVariant() {
         val text = """
             Machine Serial Number: ABCDEF0123456789

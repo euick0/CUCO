@@ -23,6 +23,11 @@ class WebViewActivity : AppCompatActivity() {
     private var currentHistoryId = -1L
     private var currentHistorySubmitted = false
 
+    // The serial currently reflected in the loaded URL (`l=`). The CUCo page
+    // reads the serial from the URL, not the form, so a serial correction only
+    // takes effect after we rebuild + reload the URL.
+    private var urlSerial = ""
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,8 +37,21 @@ class WebViewActivity : AppCompatActivity() {
         currentSerial = intent.getStringExtra(EXTRA_SERIAL).orEmpty()
         currentCtime = intent.getStringExtra(EXTRA_CTIME).orEmpty()
         currentUsage = intent.getStringExtra(EXTRA_USAGE).orEmpty()
+        // -1 = fresh scan/import (create a new history row). >=0 = opened from
+        // history (reuse that row so we don't create duplicates).
+        currentHistoryId = intent.getLongExtra(EXTRA_HISTORY_ID, -1L)
 
-        recordHistory()
+        if (savedInstanceState != null) {
+            currentSerial = savedInstanceState.getString(STATE_SERIAL, currentSerial)
+            currentCtime = savedInstanceState.getString(STATE_CTIME, currentCtime)
+            currentUsage = savedInstanceState.getString(STATE_USAGE, currentUsage)
+            currentHistoryId = savedInstanceState.getLong(STATE_HISTORY_ID, currentHistoryId)
+            currentHistorySubmitted = savedInstanceState.getBoolean(STATE_SUBMITTED, false)
+        }
+
+        if (currentHistoryId < 0) {
+            recordHistory()
+        }
 
         binding.webview.settings.apply {
             javaScriptEnabled = true
@@ -65,7 +83,21 @@ class WebViewActivity : AppCompatActivity() {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
 
-        binding.webview.loadUrl(buildCucoUrl(currentSerial))
+        loadSerialUrl(currentSerial)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_SERIAL, currentSerial)
+        outState.putString(STATE_CTIME, currentCtime)
+        outState.putString(STATE_USAGE, currentUsage)
+        outState.putLong(STATE_HISTORY_ID, currentHistoryId)
+        outState.putBoolean(STATE_SUBMITTED, currentHistorySubmitted)
+    }
+
+    private fun loadSerialUrl(serial: String) {
+        urlSerial = serial
+        binding.webview.loadUrl(buildCucoUrl(serial))
     }
 
     private fun evaluate(view: WebView) {
@@ -92,6 +124,21 @@ class WebViewActivity : AppCompatActivity() {
         currentHistorySubmitted = false
     }
 
+    /** Persists the latest edited values into the current history row. */
+    private fun persistFields() {
+        if (currentHistoryId < 0) {
+            recordHistory()
+            return
+        }
+        HistoryRepository.updateFields(
+            this,
+            currentHistoryId,
+            currentSerial,
+            currentCtime,
+            currentUsage,
+        )
+    }
+
     private fun navigateToMain() {
         startActivity(
             Intent(this, MainActivity::class.java)
@@ -106,6 +153,17 @@ class WebViewActivity : AppCompatActivity() {
         else navigateToMain()
     }
 
+    /** Builds the CUCo URL from the user-editable settings, keeping the `l=` serial. */
+    private fun buildCucoUrl(serial: String): String {
+        val builder = Uri.parse(SettingsRepository.baseUrl(this)).buildUpon()
+            .appendQueryParameter("client", SettingsRepository.client(this))
+            .appendQueryParameter("lang", SettingsRepository.lang(this))
+        if (serial.isNotEmpty()) {
+            builder.appendQueryParameter("l", serial)
+        }
+        return builder.build().toString()
+    }
+
     inner class CucoInterface {
         @JavascriptInterface
         fun onFieldChanged(field: String, value: String) {
@@ -117,8 +175,15 @@ class WebViewActivity : AppCompatActivity() {
                     "usage" -> (value != currentUsage).also { currentUsage = value }
                     else -> false
                 }
-                if (changed) {
-                    recordHistory()
+                if (!changed) return@runOnUiThread
+
+                // Remember the edit so it survives a reload / activity recreation.
+                persistFields()
+
+                // The serial lives in the URL, so a serial correction needs a
+                // reload to actually take effect on resubmit.
+                if (field == "serial" && value != urlSerial && isLikelySerial(value)) {
+                    loadSerialUrl(value)
                 }
             }
         }
@@ -143,25 +208,16 @@ class WebViewActivity : AppCompatActivity() {
         const val EXTRA_SERIAL = "serial"
         const val EXTRA_CTIME = "ctime"
         const val EXTRA_USAGE = "usage"
+        const val EXTRA_HISTORY_ID = "history_id"
 
-        private const val CUCO_BASE_URL = "https://cuco.inforlandia.pt/ucode/"
-        private const val CUCO_CLIENT = "secretaria-geral da educação e ciência"
-        private const val CUCO_LANG = "pt"
+        private const val STATE_SERIAL = "state_serial"
+        private const val STATE_CTIME = "state_ctime"
+        private const val STATE_USAGE = "state_usage"
+        private const val STATE_HISTORY_ID = "state_history_id"
+        private const val STATE_SUBMITTED = "state_submitted"
 
-        /**
-         * The CUCo page now reads the machine serial number from the `l` query
-         * parameter (the last 32 hex chars of the URL) instead of a form input,
-         * e.g. `.../ucode/?client=...&lang=pt&l=5FB52B0D4B514DE2E91D8CAC116E8EF9`.
-         * Certified Time and Usage Counter are still filled in the form via JS.
-         */
-        fun buildCucoUrl(serial: String): String {
-            val builder = Uri.parse(CUCO_BASE_URL).buildUpon()
-                .appendQueryParameter("client", CUCO_CLIENT)
-                .appendQueryParameter("lang", CUCO_LANG)
-            if (serial.isNotEmpty()) {
-                builder.appendQueryParameter("l", serial)
-            }
-            return builder.build().toString()
-        }
+        private val serialRegex = Regex("""^[0-9A-Fa-f]{16,64}$""")
+
+        private fun isLikelySerial(value: String): Boolean = serialRegex.matches(value)
     }
 }

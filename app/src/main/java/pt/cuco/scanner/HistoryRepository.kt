@@ -58,6 +58,18 @@ object HistoryRepository {
         save(context, updated)
     }
 
+    /** Updates the field values of an existing entry (used when the user edits them). */
+    fun updateFields(context: Context, id: Long, serial: String, ctime: String, usage: String) {
+        val updated = loadAll(context).map { entry ->
+            if (entry.id == id) {
+                entry.copy(serial = serial, ctime = ctime, usage = usage)
+            } else {
+                entry
+            }
+        }
+        save(context, updated)
+    }
+
     fun deleteEntry(context: Context, id: Long) {
         save(context, loadAll(context).filter { it.id != id })
     }

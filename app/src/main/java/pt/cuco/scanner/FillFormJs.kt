@@ -181,7 +181,7 @@ object FillFormJs {
     return null;
   }
 
-  function attachListener(el, fieldName) {
+  function attachListener(el, fieldName, continuous) {
     if (!el || el.__cucoListening) return;
     el.__cucoListening = true;
     function onChange() {
@@ -193,6 +193,13 @@ object FillFormJs {
     }
     try { el.addEventListener('change', onChange); } catch (e) {}
     try { el.addEventListener('blur', onChange); } catch (e) {}
+    // For ctime/usage we also capture every keystroke so an edit is remembered
+    // even if the field never loses focus. The serial is intentionally left to
+    // change/blur only, because each serial edit reloads the page (it lives in
+    // the URL), and we don't want to reload on every keystroke.
+    if (continuous) {
+      try { el.addEventListener('input', onChange); } catch (e) {}
+    }
   }
 
   function tryFill() {
@@ -233,13 +240,13 @@ object FillFormJs {
     ], ['time', 'certified', 'tempo', 'certificada', 'hora']);
 
     if (!filled.serial && serialEl && fillable(serialEl)) {
-      if (setVal(serialEl, v.serial)) { filled.serial = true; attachListener(serialEl, 'serial'); }
+      if (setVal(serialEl, v.serial)) { filled.serial = true; attachListener(serialEl, 'serial', false); }
     }
     if (!filled.ctime && ctimeEl && fillable(ctimeEl)) {
-      if (setVal(ctimeEl, v.ctime)) { filled.ctime = true; attachListener(ctimeEl, 'ctime'); }
+      if (setVal(ctimeEl, v.ctime)) { filled.ctime = true; attachListener(ctimeEl, 'ctime', true); }
     }
     if (!filled.usage && usageEl && fillable(usageEl)) {
-      if (setVal(usageEl, v.usage)) { filled.usage = true; attachListener(usageEl, 'usage'); }
+      if (setVal(usageEl, v.usage)) { filled.usage = true; attachListener(usageEl, 'usage', true); }
     }
 
     return filled.serial && filled.ctime && filled.usage;
